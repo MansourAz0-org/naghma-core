@@ -1381,7 +1381,9 @@ fn score(
             return None;
         }
     }
-    let rel = |n: &Prepared| -> f64 { frame.rel(n.cents) };
+    // Each note's pitch relative to the tonic, folded once: the loops below
+    // compare every note with many targets.
+    let rels: Vec<f64> = notes.iter().map(|n| frame.rel(n.cents)).collect();
     let distance = |a: f64, b: f64| frame.distance(a, b);
     // Best matching target and its membership.
     let best_match = |r: f64, targets: &[Target]| -> Option<(usize, f64)> {
@@ -1402,8 +1404,7 @@ fn score(
     let mut foreign = Vec::new();
     let mut degree_time = vec![0.0; classes.len()];
     let mut tonic_time = 0.0;
-    for n in notes {
-        let r = rel(n);
+    for (n, &r) in notes.iter().zip(&rels) {
         let m = best_match(r, &classes).map_or(0.0, |(i, m)| {
             degree_time[i] += n.weight * m;
             m
@@ -1430,9 +1431,10 @@ fn score(
     let median = durations[durations.len() / 2];
     let final_rest = notes
         .iter()
+        .zip(&rels)
         .rev()
-        .find(|n| n.duration >= median)
-        .is_some_and(|n| on(rel(n), 0.0) >= 0.5);
+        .find(|(n, _)| n.duration >= median)
+        .is_some_and(|(_, &r)| on(r, 0.0) >= 0.5);
 
     let resting: Vec<f64> = maqam
         .resting_steps
@@ -1448,10 +1450,8 @@ fn score(
         .collect();
     let resting_time: f64 = notes
         .iter()
-        .map(|n| {
-            let r = rel(n);
-            n.weight * resting.iter().map(|&c| on(r, c)).fold(0.0, f64::max)
-        })
+        .zip(&rels)
+        .map(|(n, &r)| n.weight * resting.iter().map(|&c| on(r, c)).fold(0.0, f64::max))
         .sum();
     let resting_share = if resting.is_empty() {
         0.0
@@ -1494,7 +1494,14 @@ fn score(
                 let c = base.cents + d.cents;
                 if repeating { c.rem_euclid(1200.0) } else { c }
             })
-            .filter(|&c| notes.iter().map(|n| n.weight * on(rel(n), c)).sum::<f64>() >= heard_s)
+            .filter(|&c| {
+                notes
+                    .iter()
+                    .zip(&rels)
+                    .map(|(n, &r)| n.weight * on(r, c))
+                    .sum::<f64>()
+                    >= heard_s
+            })
             .count();
         let completeness = got as f64 / jins.degrees.len().max(1) as f64;
         ajnas_score += completeness;
