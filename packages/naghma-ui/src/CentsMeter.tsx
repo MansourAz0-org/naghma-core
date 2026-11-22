@@ -41,6 +41,8 @@ export function CentsMeter({ read, flatLabel, sharpLabel, className = "cents-met
     let value = 0;
     let velocity = 0;
     let presence = 0; // 0..1 fade for needle when no note
+    /** What the canvas shows; null = it must be redrawn. */
+    let shown: { value: number; presence: number; w: number; h: number } | null = null;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -48,6 +50,7 @@ export function CentsMeter({ read, flatLabel, sharpLabel, className = "cents-met
       canvas.width = Math.round(rect.width * dpr);
       canvas.height = Math.round(rect.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      shown = null; // Resizing clears the canvas.
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -64,6 +67,18 @@ export function CentsMeter({ read, flatLabel, sharpLabel, className = "cents-met
 
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
+      raf = requestAnimationFrame(draw);
+      // A still needle (held note or idle) looks the same: skip the redraw.
+      if (
+        shown &&
+        shown.w === w &&
+        shown.h === h &&
+        Math.abs(shown.value - value) < 0.01 &&
+        tuningZone(shown.value) === tuningZone(value) &&
+        Math.abs(shown.presence - presence) < 0.002
+      )
+        return;
+      shown = { value, presence, w, h };
       ctx.clearRect(0, 0, w, h);
       const cx = w / 2;
       const cy = h * 0.92;
@@ -132,8 +147,6 @@ export function CentsMeter({ read, flatLabel, sharpLabel, className = "cents-met
       ctx.arc(cx, cy, 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
-
-      raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => {
