@@ -803,9 +803,11 @@ impl MaqamAnalyzer {
                 score: a * floor + (1.0 - a) * r.score,
             });
         }
-        // Forget hypotheses that have faded into the background.
+        // Forget hypotheses that have faded into the background. Many share
+        // the floor score; ties are broken by key, so which ones are kept
+        // does not depend on the hash map's random iteration order.
         let mut kept: Vec<_> = next.into_iter().collect();
-        kept.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        kept.sort_by(|a, b| b.1.score.total_cmp(&a.1.score).then_with(|| a.0.cmp(&b.0)));
         kept.truncate(64);
         self.memory = kept.into_iter().collect();
         self.remembered_at = Some(now_s);
