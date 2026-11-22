@@ -1282,7 +1282,16 @@ impl Frame {
 
 /// Circular distance in cents within an octave.
 fn circ(a: f64, b: f64) -> f64 {
-    let d = (a - b).rem_euclid(1200.0);
+    let d = a - b;
+    // Both are usually already within one octave; then this equals
+    // rem_euclid exactly, without the fmod call.
+    let d = if d > -1200.0 && d < 0.0 {
+        d + 1200.0
+    } else if (0.0..1200.0).contains(&d) {
+        d
+    } else {
+        d.rem_euclid(1200.0)
+    };
     d.min(1200.0 - d)
 }
 
@@ -1873,6 +1882,23 @@ fn centre_cents(jins: &Jins) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn circular_distance_matches_rem_euclid() {
+        let reference = |a: f64, b: f64| {
+            let d = (a - b).rem_euclid(1200.0);
+            d.min(1200.0 - d)
+        };
+        let values = [
+            -2400.5, -1200.0, -1199.9, -600.0, -0.0, 0.0, 1e-12, 50.0, 599.5, 1199.99, 1200.0,
+            1850.25, 3600.0,
+        ];
+        for &a in &values {
+            for &b in &values {
+                assert_eq!(circ(a, b).to_bits(), reference(a, b).to_bits(), "{a} {b}");
+            }
+        }
+    }
     use crate::notation::{Accidental, Degree};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/synthetic-maqam-dataset.json");
