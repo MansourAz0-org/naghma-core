@@ -803,9 +803,11 @@ impl MaqamAnalyzer {
                 score: a * floor + (1.0 - a) * r.score,
             });
         }
-        // Forget hypotheses that have faded into the background.
+        // Forget hypotheses that have faded into the background. Many share
+        // the floor score; ties are broken by key, so which ones are kept
+        // does not depend on the hash map's random iteration order.
         let mut kept: Vec<_> = next.into_iter().collect();
-        kept.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        kept.sort_by(|a, b| b.1.score.total_cmp(&a.1.score).then_with(|| a.0.cmp(&b.0)));
         kept.truncate(64);
         self.memory = kept.into_iter().collect();
         self.remembered_at = Some(now_s);
@@ -1280,7 +1282,16 @@ impl Frame {
 
 /// Circular distance in cents within an octave.
 fn circ(a: f64, b: f64) -> f64 {
-    let d = (a - b).rem_euclid(1200.0);
+    let d = a - b;
+    // Both are usually already within one octave; then this equals
+    // rem_euclid exactly, without the fmod call.
+    let d = if d > -1200.0 && d < 0.0 {
+        d + 1200.0
+    } else if (0.0..1200.0).contains(&d) {
+        d
+    } else {
+        d.rem_euclid(1200.0)
+    };
     d.min(1200.0 - d)
 }
 
@@ -1379,7 +1390,9 @@ fn score(
             return None;
         }
     }
-    let rel = |n: &Prepared| -> f64 { frame.rel(n.cents) };
+    // Each note's pitch relative to the tonic, folded once: the loops below
+    // compare every note with many targets.
+    let rels: Vec<f64> = notes.iter().map(|n| frame.rel(n.cents)).collect();
     let distance = |a: f64, b: f64| frame.distance(a, b);
     // Best matching target and its membership.
     let best_match = |r: f64, targets: &[Target]| -> Option<(usize, f64)> {
@@ -1400,8 +1413,7 @@ fn score(
     let mut foreign = Vec::new();
     let mut degree_time = vec![0.0; classes.len()];
     let mut tonic_time = 0.0;
-    for n in notes {
-        let r = rel(n);
+    for (n, &r) in notes.iter().zip(&rels) {
         let m = best_match(r, &classes).map_or(0.0, |(i, m)| {
             degree_time[i] += n.weight * m;
             m
@@ -1428,9 +1440,10 @@ fn score(
     let median = durations[durations.len() / 2];
     let final_rest = notes
         .iter()
+        .zip(&rels)
         .rev()
-        .find(|n| n.duration >= median)
-        .is_some_and(|n| on(rel(n), 0.0) >= 0.5);
+        .find(|(n, _)| n.duration >= median)
+        .is_some_and(|(_, &r)| on(r, 0.0) >= 0.5);
 
     let resting: Vec<f64> = maqam
         .resting_steps
@@ -1446,10 +1459,8 @@ fn score(
         .collect();
     let resting_time: f64 = notes
         .iter()
-        .map(|n| {
-            let r = rel(n);
-            n.weight * resting.iter().map(|&c| on(r, c)).fold(0.0, f64::max)
-        })
+        .zip(&rels)
+        .map(|(n, &r)| n.weight * resting.iter().map(|&c| on(r, c)).fold(0.0, f64::max))
         .sum();
     let resting_share = if resting.is_empty() {
         0.0
@@ -1492,7 +1503,14 @@ fn score(
                 let c = base.cents + d.cents;
                 if repeating { c.rem_euclid(1200.0) } else { c }
             })
-            .filter(|&c| notes.iter().map(|n| n.weight * on(rel(n), c)).sum::<f64>() >= heard_s)
+            .filter(|&c| {
+                notes
+                    .iter()
+                    .zip(&rels)
+                    .map(|(n, &r)| n.weight * on(r, c))
+                    .sum::<f64>()
+                    >= heard_s
+            })
             .count();
         let completeness = got as f64 / jins.degrees.len().max(1) as f64;
         ajnas_score += completeness;
@@ -1865,6 +1883,23 @@ fn centre_cents(jins: &Jins) -> f64 {
 mod tests {
     use super::*;
     use crate::notation::{Accidental, Degree};
+
+    #[test]
+    fn circular_distance_matches_rem_euclid() {
+        let reference = |a: f64, b: f64| {
+            let d = (a - b).rem_euclid(1200.0);
+            d.min(1200.0 - d)
+        };
+        let values = [
+            -2400.5, -1200.0, -1199.9, -600.0, -0.0, 0.0, 1e-12, 50.0, 599.5, 1199.99, 1200.0,
+            1850.25, 3600.0,
+        ];
+        for &a in &values {
+            for &b in &values {
+                assert_eq!(circ(a, b).to_bits(), reference(a, b).to_bits(), "{a} {b}");
+            }
+        }
+    }
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/synthetic-maqam-dataset.json");
 
