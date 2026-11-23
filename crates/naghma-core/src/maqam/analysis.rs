@@ -1882,6 +1882,7 @@ fn centre_cents(jins: &Jins) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notation::{Accidental, Degree};
 
     #[test]
     fn circular_distance_matches_rem_euclid() {
@@ -1899,7 +1900,6 @@ mod tests {
             }
         }
     }
-    use crate::notation::{Accidental, Degree};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/synthetic-maqam-dataset.json");
 
